@@ -313,12 +313,24 @@ export async function episodes(ref) {
     const episodeUrl = absoluteUrl(match[2], url);
     const label = textOnly(match[3]);
 
+      const cleanLabel = label
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+
+    const episodeText = (cleanLabel + " " + episodeUrl)
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+
     if (
       !episodeUrl ||
       !isSiteUrl(episodeUrl) ||
       episodeUrl === url ||
-      !/cap[ií]tulo|episodio|temporada|episode/i.test(
-        label + " " + episodeUrl
+      /^(capitulos?|subtitulado|doblado|audio)$/.test(cleanLabel) ||
+      !/(?:capitulo|episodio|episode|temporada)\D{0,12}\d+/i.test(
+        episodeText
       )
     ) {
       continue;
