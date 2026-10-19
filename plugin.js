@@ -313,17 +313,25 @@ export async function episodes(ref) {
     const episodeUrl = absoluteUrl(match[2], url);
     const label = textOnly(match[3]);
 
-    if (
-      !episodeUrl ||
-      !isSiteUrl(episodeUrl) ||
-      episodeUrl === url ||
-      !/cap[ií]tulo|episodio|temporada|episode/i.test(
-        label + " " + episodeUrl
-      )
-    ) {
-      continue;
-    }
+const episodeText = (label + " " + episodeUrl)
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase();
 
+if (
+  !episodeUrl ||
+  !isSiteUrl(episodeUrl) ||
+  episodeUrl === url ||
+  /subtitulado|doblado|audio|capitulos?$/.test(
+    label.trim().toLowerCase()
+  ) ||
+  !/(capitulo|episodio|temporada|episode)\s*[-:#]?\s*\d+/i.test(
+    episodeText
+  )
+) {
+  continue;
+}
+    
     if (seen.has(episodeUrl)) continue;
     seen.add(episodeUrl);
 
