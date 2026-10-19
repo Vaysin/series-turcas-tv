@@ -11,6 +11,8 @@
     "kaj.seriesturcastv.to",
     "*.seriesturcastv.to"
   ],
+  "browser": true,
+  "streamHosts": "any",
   "capabilities": [
     "search",
     "home",
