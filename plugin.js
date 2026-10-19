@@ -313,25 +313,17 @@ export async function episodes(ref) {
     const episodeUrl = absoluteUrl(match[2], url);
     const label = textOnly(match[3]);
 
-const episodeText = (label + " " + episodeUrl)
-  .normalize("NFD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .toLowerCase();
+    if (
+      !episodeUrl ||
+      !isSiteUrl(episodeUrl) ||
+      episodeUrl === url ||
+      !/cap[ií]tulo|episodio|temporada|episode/i.test(
+        label + " " + episodeUrl
+      )
+    ) {
+      continue;
+    }
 
-if (
-  !episodeUrl ||
-  !isSiteUrl(episodeUrl) ||
-  episodeUrl === url ||
-  /subtitulado|doblado|audio|capitulos?$/.test(
-    label.trim().toLowerCase()
-  ) ||
-  !/(capitulo|episodio|temporada|episode)\s*[-:#]?\s*\d+/i.test(
-    episodeText
-  )
-) {
-  continue;
-}
-    
     if (seen.has(episodeUrl)) continue;
     seen.add(episodeUrl);
 
@@ -373,6 +365,7 @@ if (
   };
 }
 
+
 export async function resolve(ref) {
   const url = absoluteUrl(ref);
 
@@ -380,9 +373,29 @@ export async function resolve(ref) {
     throw new Error("Referencia no válida");
   }
 
+  // Intentar detectar el vídeo generado por el reproductor web.
+  try {
+    const captured = await kino.browser.capture(url);
+    const media = captured?.media?.find(
+      item => item && typeof item.url === "string" && item.url
+    );
+
+    if (media) {
+      return {
+        url: media.url,
+        headers: media.headers || {}
+      };
+    }
+  } catch (error) {
+    kino.log(
+      "No se pudo capturar el vídeo: " +
+      String(error?.message || error)
+    );
+  }
+
+  // Alternativa: buscar una URL directa en el HTML.
   const html = await getPage(url);
 
-  // Solo acepta direcciones directas de vídeo expuestas en la página.
   const direct = html.match(
     /https?:\/\/[^"'<>\\\s]+?\.(?:m3u8|mp4)(?:\?[^"'<>\\\s]*)?/i
   );
@@ -397,7 +410,7 @@ export async function resolve(ref) {
   }
 
   throw new Error(
-    "No se encontró un vídeo directo compatible. " +
-    "Puede que esta página use un reproductor externo."
+    "No se encontró un vídeo compatible. " +
+    "Comprueba si el reproductor externo permite la captura."
   );
 }
