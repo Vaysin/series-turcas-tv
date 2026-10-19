@@ -1,0 +1,24 @@
+{
+  "id": "series-turcas-tv",
+  "name": "Series Turcas TV",
+  "version": "0.1.0",
+  "apiVersion": 6,
+  "entry": "plugin.js",
+  "description": "Catálogo de series turcas, últimos capítulos y búsqueda de Series Turcas TV.",
+  "author": "Local plugin",
+  "icon": "icon.png",
+  "hosts": [
+    "kaj.seriesturcastv.to",
+    "*.seriesturcastv.to"
+  ],
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve"
+  ],
+  "categories": [
+    "series"
+  ]
+}
