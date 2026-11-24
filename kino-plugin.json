@@ -3,7 +3,7 @@
   "id": "series-turcas-tv",
   "name": "Series Turcas TV",
   "version": "0.1.0",
-  "apiVersion": 8,
+  "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Catálogo de series turcas, últimos capítulos y búsqueda de Series Turcas TV.",
   "author": "Local plugin",
