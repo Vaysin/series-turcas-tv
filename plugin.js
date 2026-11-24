@@ -1,8 +1,18 @@
-
 const BASE = "https://kaj.seriesturcastv.to";
-const UA = "Mozilla/5.0 (compatible; KinoTV plugin)";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-const SITE_ORIGIN = new URL(BASE).origin;
+// Dominio raíz (seriesturcastv.to): acepta cualquier subdominio del sitio.
+const ROOT = new URL(BASE).hostname.split(".").slice(-2).join(".");
+
+function log(message) {
+  try {
+    kino.log(String(message));
+  } catch {
+    // kino.log no disponible
+  }
+}
 
 function decodeEntities(s = "") {
   return String(s)
@@ -39,7 +49,8 @@ function absoluteUrl(url, from = BASE) {
 
 function isSiteUrl(url) {
   try {
-    return new URL(url).origin === SITE_ORIGIN;
+    const host = new URL(url).hostname;
+    return host === ROOT || host.endsWith("." + ROOT);
   } catch {
     return false;
   }
@@ -96,6 +107,10 @@ function makeItem(
   };
 }
 
+// Páginas del menú/pie que no son series (se compara el slug completo).
+const NON_SERIES_SLUG =
+  /^(home|series|series-subtituladas|series-audio|capitulos|capitulos-subtituladas|capitulos-audio|calendario|contacto|politicas-de-privacidad|terminos-y-condiciones|login|registro|buscar|sitemap_index\.xml|feed)$/i;
+
 function extractItems(html, pageUrl = BASE, limit = 100) {
   const found = new Map();
 
@@ -103,11 +118,15 @@ function extractItems(html, pageUrl = BASE, limit = 100) {
     /<a\b[^>]*href\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
 
   let match;
+  let anchors = 0;
+  let withImg = 0;
 
   while (
     (match = linkRe.exec(html)) !== null &&
     found.size < limit
   ) {
+    anchors++;
+
     const href = absoluteUrl(match[2], pageUrl);
 
     if (!href || !isSiteUrl(href)) continue;
@@ -121,20 +140,16 @@ function extractItems(html, pageUrl = BASE, limit = 100) {
     }
 
     const path = parsed.pathname.replace(/\/+$/, "");
+    const segments = path.split("/").filter(Boolean);
 
     // Las series de este sitio usan páginas de primer nivel.
-    if (!path || path.split("/").filter(Boolean).length !== 1) {
-      continue;
-    }
+    if (segments.length !== 1) continue;
 
-    // Evitar convertir enlaces del menú en series.
-    if (
-      /capitulo|episodio|temporada|sitemap|politica|contacto|genero|subtitulado|doblado|audio|series|home|login|registro|buscar|calendario|privacidad|terminos|cookies/i.test(
-        path
-      )
-    ) {
-      continue;
-    }
+    const slug = segments[0];
+
+    // Evitar convertir enlaces del menú o capítulos en series.
+    if (NON_SERIES_SLUG.test(slug)) continue;
+    if (/capitulo|episodio|temporada/i.test(slug)) continue;
 
     const inner = match[3];
     const imgMatch = inner.match(/<img\b[^>]*>/i);
@@ -142,7 +157,10 @@ function extractItems(html, pageUrl = BASE, limit = 100) {
     // No considerar como serie un enlace sin imagen de portada.
     if (!imgMatch) continue;
 
+    withImg++;
+
     const img = imgMatch[0];
+    const openTag = match[0].slice(0, match[0].indexOf(">") + 1);
 
     const srcset = attr(img, "srcset");
     const poster =
@@ -160,9 +178,9 @@ function extractItems(html, pageUrl = BASE, limit = 100) {
 
     const title =
       (heading && textOnly(heading[1])) ||
+      attr(openTag, "title") ||
       attr(img, "alt") ||
       attr(img, "title") ||
-      attr(match[0], "title") ||
       "";
 
     const item = makeItem(href, title, poster);
@@ -171,6 +189,12 @@ function extractItems(html, pageUrl = BASE, limit = 100) {
       found.set(item.ref, item);
     }
   }
+
+  log(
+    "extractItems: anchors=" + anchors +
+    " conImagen=" + withImg +
+    " items=" + found.size
+  );
 
   return [...found.values()].slice(0, limit);
 }
@@ -183,11 +207,19 @@ async function getPage(url) {
     }
   });
 
+  log("GET " + url + " -> " + res.status);
+
   if (!res.ok) {
     throw new Error("No se pudo cargar el sitio (" + res.status + ")");
   }
 
-  return await res.text();
+  const html = await res.text();
+
+  if (/just a moment|cf-challenge|attention required/i.test(html)) {
+    log("Posible bloqueo de Cloudflare en " + url);
+  }
+
+  return html;
 }
 
 export async function search(query) {
@@ -203,7 +235,8 @@ export async function search(query) {
   try {
     const html = await getPage(url);
     return extractItems(html, url, 60);
-  } catch {
+  } catch (error) {
+    log("search error: " + String(error?.message || error));
     return [];
   }
 }
@@ -221,11 +254,12 @@ export async function home() {
       {
         id: "series-destacadas",
         title: "Series destacadas",
-        ref: "/home/",
+        ref: "/series/",
         items
       }
     ];
-  } catch {
+  } catch (error) {
+    log("home error: " + String(error?.message || error));
     return [];
   }
 }
@@ -237,15 +271,15 @@ export async function browse(ref, cursor) {
     const target =
       typeof ref === "string" && ref
         ? ref
-        : "/home/";
+        : "/series/";
 
     url = new URL(target, BASE);
 
-    if (url.origin !== SITE_ORIGIN) {
-      url = new URL("/home/", BASE);
+    if (!isSiteUrl(url.href)) {
+      url = new URL("/series/", BASE);
     }
   } catch {
-    url = new URL("/home/", BASE);
+    url = new URL("/series/", BASE);
   }
 
   const page = Math.max(
@@ -253,17 +287,34 @@ export async function browse(ref, cursor) {
     parseInt(cursor || "1", 10) || 1
   );
 
+  let pageUrl = url.href;
+
+  // WordPress pagina como /series/page/2/
   if (page > 1) {
-    url.searchParams.set("paged", String(page));
+    const basePath = url.pathname
+      .replace(/\/page\/\d+\/?$/, "")
+      .replace(/\/+$/, "");
+
+    pageUrl = new URL(basePath + "/page/" + page + "/", BASE).href;
   }
 
-  const html = await getPage(url.href);
-  const items = extractItems(html, url.href, 60);
+  try {
+    const html = await getPage(pageUrl);
+    const items = extractItems(html, pageUrl, 60);
 
-  return {
-    items,
-    next: items.length >= 20 ? String(page + 1) : null
-  };
+    return {
+      items,
+      next: items.length >= 20 ? String(page + 1) : null
+    };
+  } catch (error) {
+    log("browse error: " + String(error?.message || error));
+
+    if (page > 1) {
+      return { items: [], next: null };
+    }
+
+    throw error;
+  }
 }
 
 export async function episodes(ref) {
@@ -313,7 +364,7 @@ export async function episodes(ref) {
     const episodeUrl = absoluteUrl(match[2], url);
     const label = textOnly(match[3]);
 
-      const cleanLabel = label
+    const cleanLabel = label
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
@@ -349,16 +400,23 @@ export async function episodes(ref) {
       ? parseInt(numberMatch[1], 10)
       : episodeList.length + 1;
 
+    // "Capitulo 1 Temporada 1" -> "Capitulo 1"
+    const shownLabel = label
+      .replace(/\s*temporada\s*\d+/i, "")
+      .trim();
+
     episodeList.push({
       id: slugFrom(episodeUrl),
       ref: episodeUrl,
-      title: label || "Capítulo " + number,
+      title: shownLabel || "Capítulo " + number,
       season: 1,
       number
     });
   }
 
   episodeList.sort((a, b) => a.number - b.number);
+
+  log("episodes: " + episodeList.length + " capítulos en " + url);
 
   // Si no se detectan capítulos, permitir abrir la página de la serie.
   if (!episodeList.length) {
@@ -379,7 +437,8 @@ export async function episodes(ref) {
 
 function extractEmbeds(html, pageUrl) {
   const out = new Set();
-  const re = /<iframe\b[^>]*?\b(?:data-lazy-src|data-src|src)\s*=\s*(["'])(.*?)\1/gi;
+  const re =
+    /<iframe\b[^>]*?\b(?:data-lazy-src|data-src|src)\s*=\s*(["'])(.*?)\1/gi;
   let m;
 
   while ((m = re.exec(html)) !== null) {
@@ -404,7 +463,7 @@ async function tryCapture(target) {
       };
     }
   } catch (error) {
-    kino.log(
+    log(
       "capture falló (" + target + "): " +
       String(error?.message || error)
     );
@@ -428,7 +487,10 @@ export async function resolve(ref) {
   const html = await getPage(url);
   const embeds = extractEmbeds(html, url);
 
-  kino.log("iframes encontrados: " + embeds.length + " -> " + embeds.join(" | "));
+  log(
+    "iframes encontrados: " + embeds.length +
+    (embeds.length ? " -> " + embeds.join(" | ") : "")
+  );
 
   for (const embed of embeds.slice(0, 5)) {
     result = await tryCapture(embed);
@@ -447,5 +509,8 @@ export async function resolve(ref) {
     };
   }
 
-  throw new Error("No se encontró un vídeo compatible.");
+  throw new Error(
+    "No se encontró un vídeo compatible. " +
+    "Comprueba si el reproductor externo permite la captura."
+  );
 }
