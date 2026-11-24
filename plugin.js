@@ -378,9 +378,74 @@ export async function episodes(ref) {
 }
 
 function extractEmbeds(html, pageUrl) {
-  // ... (código nuevo)
+  const out = new Set();
+  const re = /<iframe\b[^>]*?\b(?:data-lazy-src|data-src|src)\s*=\s*(["'])(.*?)\1/gi;
+  let m;
+
+  while ((m = re.exec(html)) !== null) {
+    const u = absoluteUrl(m[2], pageUrl);
+    if (/^https?:/i.test(u)) out.add(u);
+  }
+
+  return [...out];
+}
+
+async function tryCapture(target) {
+  try {
+    const captured = await kino.browser.capture(target);
+    const media = captured?.media?.find(
+      item => item && typeof item.url === "string" && item.url
+    );
+
+    if (media) {
+      return {
+        url: media.url,
+        headers: media.headers || {}
+      };
+    }
+  } catch (error) {
+    kino.log(
+      "capture falló (" + target + "): " +
+      String(error?.message || error)
+    );
+  }
+
+  return null;
 }
 
 export async function resolve(ref) {
-  // ... (código nuevo)
+  const url = absoluteUrl(ref);
+
+  if (!url || !isSiteUrl(url)) {
+    throw new Error("Referencia no válida");
+  }
+
+  // 1. Página del capítulo
+  let result = await tryCapture(url);
+  if (result) return result;
+
+  // 2. Iframes de los servidores
+  const html = await getPage(url);
+  const embeds = extractEmbeds(html, url);
+
+  kino.log("iframes encontrados: " + embeds.length + " -> " + embeds.join(" | "));
+
+  for (const embed of embeds.slice(0, 5)) {
+    result = await tryCapture(embed);
+    if (result) return result;
+  }
+
+  // 3. URL directa en el HTML
+  const direct = html.match(
+    /https?:\/\/[^"'<>\\\s]+?\.(?:m3u8|mp4)(?:\?[^"'<>\\\s]*)?/i
+  );
+
+  if (direct) {
+    return {
+      url: direct[0],
+      headers: { Referer: url }
+    };
+  }
+
+  throw new Error("No se encontró un vídeo compatible.");
 }
